@@ -1,0 +1,28 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <SolidColorBrush x:Key="WindowBackground"      Color="#1E1B19"/>
+    <SolidColorBrush x:Key="TopBarBackground"      Color="#262220"/>
+    <SolidColorBrush x:Key="Border"                Color="#3A3633"/>
+    <SolidColorBrush x:Key="ControlBorder"         Color="#46413D"/>
+
+    <SolidColorBrush x:Key="CardBackground"        Color="#2A2624"/>
+    <SolidColorBrush x:Key="CardBackgroundHover"   Color="#322D2A"/>
+    <SolidColorBrush x:Key="CardBackgroundPressed" Color="#383230"/>
+    <SolidColorBrush x:Key="CardBorder"            Color="#3A3633"/>
+
+    <SolidColorBrush x:Key="Accent"                Color="#E08767"/>
+
+    <SolidColorBrush x:Key="TextPrimary"           Color="#ECE7E1"/>
+    <SolidColorBrush x:Key="TextSecondary"         Color="#B8B1A8"/>
+    <SolidColorBrush x:Key="TextMuted"             Color="#8F8880"/>
+    <SolidColorBrush x:Key="WatermarkText"         Color="#7A736B"/>
+
+    <SolidColorBrush x:Key="SearchBackground"      Color="#211E1C"/>
+    <SolidColorBrush x:Key="ToolButtonBackground"  Color="#2A2624"/>
+    <SolidColorBrush x:Key="ToolButtonHover"       Color="#332E2B"/>
+    <SolidColorBrush x:Key="ToolButtonPressed"     Color="#3A3431"/>
+
+    <SolidColorBrush x:Key="OverlayBackground"     Color="#C01E1B19"/>
+
+</ResourceDictionary>
