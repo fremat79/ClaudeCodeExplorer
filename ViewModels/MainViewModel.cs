@@ -50,6 +50,11 @@ public sealed class MainViewModel : ObservableObject
         ConversationsView = CollectionViewSource.GetDefaultView(_conversations);
         ConversationsView.SortDescriptions.Add(
             new SortDescription(nameof(ConversationInfo.LastActivityUtc), ListSortDirection.Descending));
+        // Group by the full working directory (unique), then we display the project's
+        // last path segment in the header via PathLeafConverter. Filter is applied
+        // before grouping, so groups with no matching items simply do not appear.
+        ConversationsView.GroupDescriptions.Add(
+            new PropertyGroupDescription(nameof(ConversationInfo.WorkingDirectory)));
         ConversationsView.Filter = FilterPredicate;
 
         RefreshCommand = new RelayCommand(_ => _ = LoadAsync());

@@ -14,6 +14,7 @@
     <Window.Resources>
         <conv:RelativeTimeConverter x:Key="RelTime"/>
         <conv:EmptyStringToVisibilityConverter x:Key="EmptyToVis"/>
+        <conv:PathLeafConverter x:Key="PathLeaf"/>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
 
         <!-- Search box -->
@@ -181,16 +182,65 @@
             </Grid>
         </Border>
 
-        <!-- Tile grid -->
+        <!-- Tile grid – grouped by project folder, each project in an Expander -->
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled" Padding="8" Focusable="False">
             <ItemsControl ItemsSource="{Binding ConversationsView}"
                           ItemTemplate="{StaticResource ConversationCardTemplate}">
+                <!-- Outer panel: vertical stack of group expanders -->
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <WrapPanel Orientation="Horizontal"/>
+                        <StackPanel Orientation="Vertical"/>
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
+                <ItemsControl.GroupStyle>
+                    <GroupStyle>
+                        <!-- Each group rendered as an Expander -->
+                        <GroupStyle.ContainerStyle>
+                            <Style TargetType="GroupItem">
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="GroupItem">
+                                            <Expander IsExpanded="True" Margin="0,4,0,10"
+                                                      Background="Transparent" BorderThickness="0"
+                                                      Foreground="{DynamicResource TextPrimary}">
+                                                <Expander.Header>
+                                                    <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
+                                                        <TextBlock Text="{Binding Name, Converter={StaticResource PathLeaf}}"
+                                                                   FontSize="14" FontWeight="SemiBold"
+                                                                   Foreground="{DynamicResource TextPrimary}"
+                                                                   VerticalAlignment="Center"/>
+                                                        <TextBlock Text="{Binding Name}" Margin="12,0,0,0"
+                                                                   FontSize="11" Foreground="{DynamicResource TextMuted}"
+                                                                   VerticalAlignment="Center"
+                                                                   MaxWidth="560"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   ToolTip="{Binding Name}"/>
+                                                        <Border CornerRadius="9" Padding="8,1" Margin="12,0,0,0"
+                                                                Background="{DynamicResource ToolButtonBackground}"
+                                                                BorderBrush="{DynamicResource ControlBorder}"
+                                                                BorderThickness="1" VerticalAlignment="Center">
+                                                            <TextBlock FontSize="11"
+                                                                       Foreground="{DynamicResource TextSecondary}"
+                                                                       Text="{Binding ItemCount}"/>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Expander.Header>
+                                                <ItemsPresenter Margin="0,4,0,4"/>
+                                            </Expander>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </GroupStyle.ContainerStyle>
+                        <!-- Inside each group: the tiles wrap -->
+                        <GroupStyle.Panel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </GroupStyle.Panel>
+                    </GroupStyle>
+                </ItemsControl.GroupStyle>
             </ItemsControl>
         </ScrollViewer>
 
