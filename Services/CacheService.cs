@@ -57,6 +57,13 @@ public sealed class CacheService
 
     public void Set(ConversationInfo info) => _entries[info.FilePath] = info;
 
+    /// <summary>Drop a single entry (used when a conversation is deleted from disk).</summary>
+    public void Remove(string filePath)
+    {
+        if (string.IsNullOrEmpty(filePath)) return;
+        _entries.TryRemove(filePath, out _);
+    }
+
     /// <summary>Drop entries whose files have disappeared, then persist the index.</summary>
     public void Save(IReadOnlySet<string> livePaths)
     {

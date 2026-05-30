@@ -90,6 +90,38 @@
             </Setter>
         </Style>
 
+        <!-- Card close (delete) button -->
+        <Style x:Key="CardCloseButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="22"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="VerticalAlignment" Value="Top"/>
+            <Setter Property="Margin" Value="0,-4,-4,0"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextMuted}"/>
+            <Setter Property="ToolTip" Value="Delete this conversation"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="cb" CornerRadius="11" Background="Transparent">
+                            <TextBlock Text="&#x2715;" FontSize="12"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="cb" Property="Background" Value="#E81123"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="cb" Property="Background" Value="#C50F1F"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- One tile per conversation -->
         <DataTemplate x:Key="ConversationCardTemplate" DataType="{x:Type models:ConversationInfo}">
             <Button Style="{StaticResource CardButtonStyle}"
@@ -112,6 +144,10 @@
                         <MenuItem Header="Copy session id"
                                   Command="{Binding PlacementTarget.Tag.CopyIdCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                   CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                        <Separator/>
+                        <MenuItem Header="Delete conversation"
+                                  Command="{Binding PlacementTarget.Tag.DeleteCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
                     </ContextMenu>
                 </Button.ContextMenu>
 
@@ -122,9 +158,14 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="{Binding ProjectName}"
+                    <TextBlock Grid.Row="0" Text="{Binding ProjectName}" Margin="0,0,24,0"
                                Foreground="{DynamicResource Accent}" FontSize="11" FontWeight="SemiBold"
                                TextTrimming="CharacterEllipsis"/>
+
+                    <!-- Delete (X) button, top-right corner -->
+                    <Button Grid.Row="0" Grid.RowSpan="3" Style="{StaticResource CardCloseButtonStyle}"
+                            Command="{Binding DataContext.DeleteCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                            CommandParameter="{Binding}"/>
 
                     <TextBlock Grid.Row="1" Text="{Binding Title}" Margin="0,6,0,0"
                                FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}"

@@ -2,6 +2,7 @@ using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Data;
@@ -44,6 +45,7 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand OpenTerminalCommand { get; }
     public RelayCommand OpenFolderCommand { get; }
     public RelayCommand CopyIdCommand { get; }
+    public RelayCommand DeleteCommand { get; }
 
     public MainViewModel()
     {
@@ -62,6 +64,7 @@ public sealed class MainViewModel : ObservableObject
         OpenTerminalCommand = new RelayCommand(p => Run(() => { if (p is ConversationInfo c) TerminalLauncher.OpenTerminal(c); }));
         OpenFolderCommand = new RelayCommand(p => Run(() => { if (p is ConversationInfo c) TerminalLauncher.OpenInExplorer(c); }));
         CopyIdCommand = new RelayCommand(p => Run(() => { if (p is ConversationInfo c) Clipboard.SetText(c.SessionId); }));
+        DeleteCommand = new RelayCommand(p => Run(() => { if (p is ConversationInfo c) Delete(c); }));
 
         _cache.Load();
         _ = LoadAsync();
@@ -105,6 +108,65 @@ public sealed class MainViewModel : ObservableObject
         finally
         {
             IsLoading = false;
+        }
+    }
+
+    private void Delete(ConversationInfo c)
+    {
+        var answer = MessageBox.Show(
+            "Permanently delete this conversation?\n\n"
+            + c.Title + "\n\n"
+            + "This removes the session file from disk and cannot be undone.",
+            "Claude Code Explorer",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+        if (answer != MessageBoxResult.Yes) return;
+
+        if (File.Exists(c.FilePath))
+            File.Delete(c.FilePath);
+
+        // If that was the last session stored under ~/.claude/projects/<encoded>,
+        // remove the now-empty project folder too. This is the storage folder, NOT
+        // the real working directory the conversation ran in.
+        TryRemoveEmptyProjectFolder(c.FilePath);
+
+        _cache.Remove(c.FilePath);
+        _conversations.Remove(c);
+        ConversationsView.Refresh();
+
+        var n = _conversations.Count;
+        StatusText = n == 0 ? "No conversations found." : $"{n} conversation{(n == 1 ? "" : "s")}";
+    }
+
+    /// <summary>
+    /// Removes the ~/.claude/projects/&lt;encoded&gt; folder that stored a session, but only
+    /// once it holds no more .jsonl transcripts. Guarded so it can only ever delete a
+    /// folder that sits directly under <see cref="ProjectScanner.ProjectsRoot"/>.
+    /// </summary>
+    private static void TryRemoveEmptyProjectFolder(string sessionFilePath)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(sessionFilePath);
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
+
+            var parent = Path.GetDirectoryName(dir);
+            if (parent is null) return;
+
+            var projectsRoot = Path.GetFullPath(ProjectScanner.ProjectsRoot).TrimEnd('\\', '/');
+            if (!string.Equals(Path.GetFullPath(parent).TrimEnd('\\', '/'), projectsRoot,
+                    StringComparison.OrdinalIgnoreCase))
+                return; // not a project-storage folder – leave it alone
+
+            // Other conversations still live here? Keep the folder.
+            if (Directory.EnumerateFiles(dir, "*.jsonl", SearchOption.TopDirectoryOnly).Any())
+                return;
+
+            Directory.Delete(dir, recursive: true);
+        }
+        catch
+        {
+            // Best-effort cleanup – never let it block the conversation deletion.
         }
     }
 
