@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Text.Json.Serialization;
 
 namespace ClaudeCodeExplorer.Models;
@@ -8,7 +9,7 @@ namespace ClaudeCodeExplorer.Models;
 /// under ~/.claude/projects). This type is also persisted to the on-disk cache, so
 /// every stored property must stay serializable by System.Text.Json.
 /// </summary>
-public sealed class ConversationInfo
+public sealed class ConversationInfo : INotifyPropertyChanged
 {
     /// <summary>The session id (the .jsonl file name without extension). Used by `claude --resume`.</summary>
     public string SessionId { get; set; } = "";
@@ -50,32 +51,39 @@ public sealed class ConversationInfo
     public long FileWriteTimeUtcTicks { get; set; }
     public long FileSize { get; set; }
 
-    /// <summary>Session name shown on the tile: the explicit /rename title if set, otherwise the auto title.</summary>
-    [JsonIgnore]
-    public string DisplayName => !string.IsNullOrWhiteSpace(CustomTitle) ? CustomTitle! : Title;
+    // --- transient UI state (not persisted) ---
+    private bool _isSelected;
 
-    /// <summary>
-    /// First-message preview for the tile body. Blanked when it would only echo
-    /// <see cref="DisplayName"/> — i.e. when there is no custom name and no summary, so the
-    /// name is itself (a shorter truncation of) the first user message. Compared by prefix
-    /// because Title and FirstUserMessage are truncated to different lengths.
-    /// </summary>
+    /// <summary>Whether this tile is checked for batch deletion. Transient — never cached.</summary>
     [JsonIgnore]
-    public string PreviewText
+    public bool IsSelected
     {
-        get
+        get => _isSelected;
+        set
         {
-            if (string.IsNullOrEmpty(FirstUserMessage)) return "";
-            var name = StripEllipsis(DisplayName);
-            if (name.Length > 0
-                && (FirstUserMessage.StartsWith(name, StringComparison.Ordinal)
-                    || name.StartsWith(StripEllipsis(FirstUserMessage), StringComparison.Ordinal)))
-                return "";
-            return FirstUserMessage;
+            if (_isSelected == value) return;
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
         }
     }
 
-    private static string StripEllipsis(string s) => s.EndsWith('…') ? s[..^1] : s;
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    /// <summary>
+    /// The small accent heading on the tile: the explicit /rename title when one was set,
+    /// otherwise the session GUID. Using the id (rather than the auto title) for un-named
+    /// sessions keeps the heading distinct from the message shown in the body — no duplication —
+    /// while still giving every tile an identifier.
+    /// </summary>
+    [JsonIgnore]
+    public string DisplayName => !string.IsNullOrWhiteSpace(CustomTitle) ? CustomTitle! : SessionId;
+
+    /// <summary>
+    /// Conversation extract shown in the tile body — the first real user message, falling back to
+    /// the auto title so the body is never empty when the session has content.
+    /// </summary>
+    [JsonIgnore]
+    public string PreviewText => !string.IsNullOrEmpty(FirstUserMessage) ? FirstUserMessage : Title;
 
     [JsonIgnore]
     private string? _searchBlob;
