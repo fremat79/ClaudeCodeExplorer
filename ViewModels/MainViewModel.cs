@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -164,12 +165,62 @@ public sealed class MainViewModel : ObservableObject
         private set => SetProperty(ref _indexingText, value);
     }
 
-    private int _retentionDays = 180;
+    private bool _retentionUserSet;
+    private int _retentionDays = 1;
     /// <summary>Age threshold (in days) for the "delete older than" maintenance action. Never below 1.</summary>
     public int RetentionDays
     {
         get => _retentionDays;
-        set => SetProperty(ref _retentionDays, Math.Max(1, value)); // clamp: no negatives / no 0
+        set
+        {
+            _retentionUserSet = true; // a manual change; don't override it on refresh
+            SetProperty(ref _retentionDays, Math.Max(1, value)); // clamp: no negatives / no 0
+        }
+    }
+
+    /// <summary>
+    /// Defaults the retention threshold to the age (in whole days) of the oldest conversation, so
+    /// "Delete older" would include it. Skipped once the user has set the value manually.
+    /// </summary>
+    private void ApplyDefaultRetentionDays()
+    {
+        if (_retentionUserSet || _conversations.Count == 0) return;
+        var now = DateTime.UtcNow;
+        double maxAgeDays = _conversations.Max(c => (now - c.LastActivityUtc).TotalDays);
+        int days = Math.Max(1, (int)Math.Floor(maxAgeDays));
+        if (SetProperty(ref _retentionDays, days, nameof(RetentionDays))) { /* notified */ }
+    }
+
+    // --- Config inspector (split panel) ---
+    private bool _isInspectorOpen;
+    /// <summary>Whether the right-hand config inspector panel is shown.</summary>
+    public bool IsInspectorOpen
+    {
+        get => _isInspectorOpen;
+        private set => SetProperty(ref _isInspectorOpen, value);
+    }
+
+    private string _inspectorTitle = "";
+    /// <summary>Folder whose Claude config is being inspected.</summary>
+    public string InspectorTitle
+    {
+        get => _inspectorTitle;
+        private set => SetProperty(ref _inspectorTitle, value);
+    }
+
+    /// <summary>Root nodes of the effective-config tree shown in the inspector.</summary>
+    public ObservableCollection<ConfigNode> InspectorNodes { get; } = new();
+
+    private double _lastInspectorWidth = 460;
+    private GridLength _inspectorColumnWidth = new(0);
+    /// <summary>
+    /// Width of the inspector column, bound TwoWay so the GridSplitter can resize it and we can
+    /// collapse it to 0 on close (which makes the panel disappear entirely).
+    /// </summary>
+    public GridLength InspectorColumnWidth
+    {
+        get => _inspectorColumnWidth;
+        set => SetProperty(ref _inspectorColumnWidth, value);
     }
 
     public RelayCommand RefreshCommand { get; }
@@ -186,6 +237,10 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand ClearSelectionCommand { get; }
     public RelayCommand DeleteSelectedCommand { get; }
     public RelayCommand RebuildIndexCommand { get; }
+    public RelayCommand InspectSettingsCommand { get; }
+    public RelayCommand CloseInspectorCommand { get; }
+    public RelayCommand OpenConfigFileCommand { get; }
+    public RelayCommand CopyValueCommand { get; }
 
     public MainViewModel()
     {
@@ -216,6 +271,12 @@ public sealed class MainViewModel : ObservableObject
         ClearSelectionCommand = new RelayCommand(_ => ClearSelection());
         DeleteSelectedCommand = new RelayCommand(_ => Run(DeleteSelected));
         RebuildIndexCommand = new RelayCommand(_ => _ = RebuildIndexAsync());
+        InspectSettingsCommand = new RelayCommand(InspectSettings);
+        CloseInspectorCommand = new RelayCommand(_ => CloseInspector());
+        OpenConfigFileCommand = new RelayCommand(
+            p => Run(() => OpenPath((p as ConfigNode)?.FilePath ?? p as string)),
+            p => (p as ConfigNode)?.CanOpen == true || (p is string s && !string.IsNullOrEmpty(s)));
+        CopyValueCommand = new RelayCommand(p => Run(() => { if (p is ConfigNode n) Clipboard.SetText(n.DisplayValue); }));
 
         _cache.Load();
         _ = LoadAsync();
@@ -290,6 +351,7 @@ public sealed class MainViewModel : ObservableObject
             if (list.Count > 0)
             {
                 UpdateCountStatus();
+                ApplyDefaultRetentionDays(); // default the threshold to the oldest conversation's age
             }
             else
             {
@@ -482,6 +544,36 @@ public sealed class MainViewModel : ObservableObject
         var items = group.Items.OfType<ConversationInfo>().ToList();
         bool allSelected = items.Count > 0 && items.All(c => c.IsSelected);
         foreach (var c in items) c.IsSelected = !allSelected;
+    }
+
+    /// <summary>Opens the config inspector split panel for a folder group (its WorkingDirectory).</summary>
+    private void InspectSettings(object? parameter)
+    {
+        if (parameter is not CollectionViewGroup group) return;
+        var folder = group.Name as string ?? "";
+
+        InspectorNodes.Clear();
+        foreach (var node in ClaudeConfigInspector.Inspect(folder))
+            InspectorNodes.Add(node);
+
+        InspectorTitle = string.IsNullOrWhiteSpace(folder) ? "(unknown folder)" : folder;
+        if (InspectorColumnWidth.Value <= 0)
+            InspectorColumnWidth = new GridLength(_lastInspectorWidth); // restore last width
+        IsInspectorOpen = true;
+    }
+
+    private void CloseInspector()
+    {
+        if (InspectorColumnWidth.IsAbsolute && InspectorColumnWidth.Value > 0)
+            _lastInspectorWidth = InspectorColumnWidth.Value; // remember for next open
+        InspectorColumnWidth = new GridLength(0);
+        IsInspectorOpen = false;
+    }
+
+    private static void OpenPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || (!File.Exists(path) && !Directory.Exists(path))) return;
+        Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
     }
 
     private void ClearSelection()

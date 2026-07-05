@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:conv="clr-namespace:ClaudeCodeExplorer.Converters"
         xmlns:models="clr-namespace:ClaudeCodeExplorer.Models"
+        xmlns:beh="clr-namespace:ClaudeCodeExplorer.Behaviors"
         Title="Claude Code Explorer"
         Height="720" Width="1040"
         MinHeight="420" MinWidth="560"
@@ -16,7 +17,52 @@
         <conv:EmptyStringToVisibilityConverter x:Key="EmptyToVis"/>
         <conv:PathLeafConverter x:Key="PathLeaf"/>
         <conv:InverseBooleanConverter x:Key="InverseBool"/>
+        <conv:ConfigSourceToBrushConverter x:Key="SourceBrush"/>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
+        <!-- Config inspector: one row per merged setting / array element / file / branch -->
+        <HierarchicalDataTemplate DataType="{x:Type models:ConfigNode}" ItemsSource="{Binding Children}">
+            <StackPanel Orientation="Horizontal" Background="Transparent"
+                        ToolTip="{Binding OverrideTooltip}"
+                        Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=TreeView}}"
+                        beh:ClickToCommand.Command="{Binding DataContext.OpenConfigFileCommand, RelativeSource={RelativeSource AncestorType=TreeView}}"
+                        beh:ClickToCommand.CommandParameter="{Binding}">
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CanOpen}" Value="True">
+                                <Setter Property="Cursor" Value="Hand"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <Border CornerRadius="3" Padding="4,0" Margin="0,0,6,0" VerticalAlignment="Center"
+                        Background="{Binding EffectiveSource, Converter={StaticResource SourceBrush}}"
+                        Visibility="{Binding ShowBadge, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding SourceLabel}" FontSize="9" Foreground="White"/>
+                </Border>
+                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextPrimary}"/>
+                <TextBlock Text=" = " VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}"
+                           Visibility="{Binding ShowValue, Converter={StaticResource BoolToVis}}"/>
+                <TextBlock Text="{Binding DisplayValue}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondary}"
+                           TextTrimming="CharacterEllipsis" MaxWidth="380"/>
+                <TextBlock Text="  ⓘ overridden" FontSize="10" VerticalAlignment="Center"
+                           Foreground="{DynamicResource Accent}"
+                           Visibility="{Binding IsOverridden, Converter={StaticResource BoolToVis}}"/>
+                <StackPanel.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="Open file / folder"
+                                  Command="{Binding PlacementTarget.Tag.OpenConfigFileCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  CommandParameter="{Binding}"/>
+                        <MenuItem Header="Copy value"
+                                  Command="{Binding PlacementTarget.Tag.CopyValueCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  CommandParameter="{Binding}"/>
+                    </ContextMenu>
+                </StackPanel.ContextMenu>
+            </StackPanel>
+        </HierarchicalDataTemplate>
 
         <!-- Search box -->
         <Style x:Key="SearchBoxStyle" TargetType="TextBox">
@@ -317,8 +363,18 @@
             </Grid>
         </Border>
 
+        <!-- Row 1: split into tiles (left) | splitter | config inspector (right) -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" MinWidth="200"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="{Binding InspectorColumnWidth, Mode=TwoWay}"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Left: tiles + loading overlay -->
+            <Grid Grid.Column="0">
         <!-- Tile grid – grouped by project folder, each project in an Expander -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled" Padding="8" Focusable="False">
             <ItemsControl ItemsSource="{Binding ConversationsView}"
                           ItemTemplate="{StaticResource ConversationCardTemplate}">
@@ -363,8 +419,22 @@
                                                                 ToolTip="Select or clear every conversation in this folder"
                                                                 Command="{Binding DataContext.SelectAllInGroupCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                                                 CommandParameter="{Binding}"/>
+                                                        <Button Content="Inspect settings" Style="{StaticResource GroupActionButtonStyle}"
+                                                                ToolTip="Show the effective Claude config for this folder"
+                                                                Command="{Binding DataContext.InspectSettingsCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                CommandParameter="{Binding}"/>
                                                     </StackPanel>
                                                 </Expander.Header>
+                                                <Expander.Tag>
+                                                    <Binding Path="DataContext" RelativeSource="{RelativeSource AncestorType=ItemsControl}"/>
+                                                </Expander.Tag>
+                                                <Expander.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="Inspect settings (split view)"
+                                                                  Command="{Binding PlacementTarget.Tag.InspectSettingsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                                  CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    </ContextMenu>
+                                                </Expander.ContextMenu>
                                                 <ItemsPresenter Margin="0,4,0,4"/>
                                             </Expander>
                                         </ControlTemplate>
@@ -383,12 +453,74 @@
             </ItemsControl>
         </ScrollViewer>
 
-        <!-- Loading overlay -->
-        <Border Grid.Row="1" Background="{DynamicResource OverlayBackground}"
-                Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}">
-            <TextBlock Text="Loading…" HorizontalAlignment="Center" VerticalAlignment="Center"
-                       FontSize="16" Foreground="{DynamicResource TextSecondary}"/>
-        </Border>
+                <!-- Loading overlay (covers the tiles column) -->
+                <Border Background="{DynamicResource OverlayBackground}"
+                        Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="Loading…" HorizontalAlignment="Center" VerticalAlignment="Center"
+                               FontSize="16" Foreground="{DynamicResource TextSecondary}"/>
+                </Border>
+            </Grid>
+
+            <!-- Resizable divider (only while the inspector is open) -->
+            <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Center" VerticalAlignment="Stretch"
+                          Background="{DynamicResource Border}" Cursor="SizeWE"
+                          ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"
+                          Visibility="{Binding IsInspectorOpen, Converter={StaticResource BoolToVis}}"/>
+
+            <!-- Right: config inspector (devtools-style). The column width is bound TwoWay, so the
+                 splitter resizes it and closing sets it to 0 — making the panel disappear entirely. -->
+            <Border Grid.Column="2"
+                    Background="{DynamicResource WindowBackground}"
+                    BorderBrush="{DynamicResource Border}" BorderThickness="1,0,0,0"
+                    Visibility="{Binding IsInspectorOpen, Converter={StaticResource BoolToVis}}">
+                <DockPanel>
+                    <Border DockPanel.Dock="Top" Padding="10,8" Background="{DynamicResource TopBarBackground}"
+                            BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Claude config (effective)" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="{Binding InspectorTitle}" FontSize="11"
+                                           Foreground="{DynamicResource TextMuted}"
+                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding InspectorTitle}"/>
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="✕" Style="{StaticResource StatusButtonStyle}"
+                                    VerticalAlignment="Top" ToolTip="Close inspector"
+                                    Command="{Binding CloseInspectorCommand}"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- Source legend (low → high precedence) -->
+                    <Border DockPanel.Dock="Top" Padding="10,5" Background="{DynamicResource TopBarBackground}"
+                            BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1">
+                        <StackPanel Orientation="Horizontal">
+                            <Border CornerRadius="3" Padding="4,0" Margin="0,0,6,0" Background="#8F8880"><TextBlock Text="user" FontSize="9" Foreground="White"/></Border>
+                            <Border CornerRadius="3" Padding="4,0" Margin="0,0,6,0" Background="#4A9EE0"><TextBlock Text="project" FontSize="9" Foreground="White"/></Border>
+                            <Border CornerRadius="3" Padding="4,0" Margin="0,0,6,0" Background="#5FB37A"><TextBlock Text="local" FontSize="9" Foreground="White"/></Border>
+                            <Border CornerRadius="3" Padding="4,0" Background="#E0673F"><TextBlock Text="managed" FontSize="9" Foreground="White"/></Border>
+                        </StackPanel>
+                    </Border>
+
+                    <TreeView ItemsSource="{Binding InspectorNodes}" Background="Transparent"
+                              BorderThickness="0" Foreground="{DynamicResource TextPrimary}"
+                              HorizontalContentAlignment="Stretch"
+                              VerticalAlignment="Stretch" HorizontalAlignment="Stretch"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto">
+                        <TreeView.ItemContainerStyle>
+                            <Style TargetType="TreeViewItem">
+                                <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            </Style>
+                        </TreeView.ItemContainerStyle>
+                    </TreeView>
+                </DockPanel>
+            </Border>
+        </Grid>
 
         <!-- Docked bottom status bar: status + full-text toggle + all actions + index progress -->
         <Border Grid.Row="2" Background="{DynamicResource TopBarBackground}"
