@@ -30,6 +30,7 @@ public static class JsonlParser
 
         var summariesByLeaf = new Dictionary<string, string>(StringComparer.Ordinal);
         string? lastSummary = null;
+        string? customTitle = null;
         string? lastMessageUuid = null;
         DateTime? minTs = null;
         DateTime? maxTs = null;
@@ -73,6 +74,19 @@ public static class JsonlParser
                                 if (!string.IsNullOrEmpty(leafId))
                                     summariesByLeaf[leafId!] = summary!;
                             }
+                        }
+                        continue;
+                    }
+
+                    if (type == "custom-title")
+                    {
+                        // Written by Claude Code's /rename. Renaming again appends a new line,
+                        // so the last non-empty value wins.
+                        if (root.TryGetProperty("customTitle", out var ct)
+                            && ct.ValueKind == JsonValueKind.String)
+                        {
+                            var value = ct.GetString();
+                            if (!string.IsNullOrWhiteSpace(value)) customTitle = value;
                         }
                         continue;
                     }
@@ -137,6 +151,7 @@ public static class JsonlParser
             title = string.IsNullOrWhiteSpace(info.FirstUserMessage) ? "(no messages)" : info.FirstUserMessage;
         info.Title = Truncate(title!.Trim(), MaxTitleChars);
 
+        info.CustomTitle = customTitle;
         info.ProjectName = DeriveProjectName(info.WorkingDirectory, info.ProjectFolderName);
         return info;
     }

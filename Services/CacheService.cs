@@ -23,7 +23,10 @@ public sealed class CacheService
         var dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "ClaudeCodeExplorer");
-        _cachePath = Path.Combine(dir, "cache.json");
+        // Bump the file name whenever the cached ConversationInfo shape changes, so an old
+        // cache (e.g. one predating CustomTitle) is discarded and every transcript re-parsed
+        // once, instead of serving stale entries for files whose size/mtime never change.
+        _cachePath = Path.Combine(dir, "cache.v2.json");
     }
 
     public void Load()

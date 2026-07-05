@@ -28,6 +28,9 @@ public sealed class ConversationInfo
     /// <summary>Best available title: Claude's own summary if present, otherwise the first user prompt.</summary>
     public string Title { get; set; } = "";
 
+    /// <summary>Explicit session name set via Claude Code's /rename, if any.</summary>
+    public string? CustomTitle { get; set; }
+
     /// <summary>The first real user message, used for the tooltip preview and search.</summary>
     public string FirstUserMessage { get; set; } = "";
 
@@ -47,6 +50,33 @@ public sealed class ConversationInfo
     public long FileWriteTimeUtcTicks { get; set; }
     public long FileSize { get; set; }
 
+    /// <summary>Session name shown on the tile: the explicit /rename title if set, otherwise the auto title.</summary>
+    [JsonIgnore]
+    public string DisplayName => !string.IsNullOrWhiteSpace(CustomTitle) ? CustomTitle! : Title;
+
+    /// <summary>
+    /// First-message preview for the tile body. Blanked when it would only echo
+    /// <see cref="DisplayName"/> — i.e. when there is no custom name and no summary, so the
+    /// name is itself (a shorter truncation of) the first user message. Compared by prefix
+    /// because Title and FirstUserMessage are truncated to different lengths.
+    /// </summary>
+    [JsonIgnore]
+    public string PreviewText
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(FirstUserMessage)) return "";
+            var name = StripEllipsis(DisplayName);
+            if (name.Length > 0
+                && (FirstUserMessage.StartsWith(name, StringComparison.Ordinal)
+                    || name.StartsWith(StripEllipsis(FirstUserMessage), StringComparison.Ordinal)))
+                return "";
+            return FirstUserMessage;
+        }
+    }
+
+    private static string StripEllipsis(string s) => s.EndsWith('…') ? s[..^1] : s;
+
     [JsonIgnore]
     private string? _searchBlob;
 
@@ -54,6 +84,6 @@ public sealed class ConversationInfo
     [JsonIgnore]
     public string SearchBlob =>
         _searchBlob ??= string.Join('\n',
-            Title, FirstUserMessage, ProjectName, WorkingDirectory, GitBranch ?? "", SessionId)
+            Title, CustomTitle ?? "", FirstUserMessage, ProjectName, WorkingDirectory, GitBranch ?? "", SessionId)
             .ToLowerInvariant();
 }

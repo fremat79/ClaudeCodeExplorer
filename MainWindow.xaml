@@ -158,7 +158,7 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="{Binding ProjectName}" Margin="0,0,24,0"
+                    <TextBlock Grid.Row="0" Text="{Binding DisplayName}" Margin="0,0,24,0"
                                Foreground="{DynamicResource Accent}" FontSize="11" FontWeight="SemiBold"
                                TextTrimming="CharacterEllipsis"/>
 
@@ -167,7 +167,7 @@
                             Command="{Binding DataContext.DeleteCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                             CommandParameter="{Binding}"/>
 
-                    <TextBlock Grid.Row="1" Text="{Binding Title}" Margin="0,6,0,0"
+                    <TextBlock Grid.Row="1" Text="{Binding PreviewText}" Margin="0,6,0,0"
                                FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}"
                                TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
                                VerticalAlignment="Top"/>
