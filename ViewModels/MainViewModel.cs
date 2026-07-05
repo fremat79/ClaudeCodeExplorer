@@ -49,18 +49,15 @@ public sealed class MainViewModel : ObservableObject
         {
             if (!SetProperty(ref _useFullTextSearch, value)) return;
             SettingsService.SetFullTextEnabled(value);
-            if (value)
-            {
-                StartIndexing();          // build/refresh the index in the background
-                ApplySearch();            // re-run current query, now including full-text
-            }
-            else
-            {
-                _indexCts?.Cancel();      // stop any running build
-                IsIndexing = false;
-                _ftsIds = new HashSet<string>(StringComparer.Ordinal);
-                RefreshResults();         // re-filter on metadata only
-            }
+
+            // Pure query-time discriminator: the index is always built/maintained in the background
+            // (see LoadAsync). With no active query the toggle can't change what's shown → do nothing.
+            if (_queryTerms.Length == 0) return;
+
+            // Re-filter through the debounce timer so the click returns instantly (no synchronous
+            // re-render on the UI thread). ApplySearch reads the current flag, so on/off both work.
+            _searchDebounce.Stop();
+            _searchDebounce.Start();
         }
     }
 
@@ -370,8 +367,9 @@ public sealed class MainViewModel : ObservableObject
             IsLoading = false;
         }
 
-        // Build the full-text index only when the feature is enabled.
-        if (_useFullTextSearch) StartIndexing();
+        // Always build/maintain the full-text index in the background (incremental), regardless of
+        // the checkbox — which is only a query-time discriminator. So the index is ready when needed.
+        StartIndexing();
     }
 
     /// <summary>Fire-and-forget background index build over the current conversations (used after each scan).</summary>

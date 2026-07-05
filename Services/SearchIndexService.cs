@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -106,37 +107,51 @@ CREATE VIRTUAL TABLE IF NOT EXISTS doc_fts USING fts5 (
                 }
 
                 int total = conversations.Count;
-                int done = 0;
-                int step = Math.Max(1, total / 100);
 
-                var batch = conn.BeginTransaction();
-                int inBatch = 0;
-                try
+                // Only re-read files whose signature changed (new/modified); the rest are already indexed.
+                var needed = conversations.Where(c =>
+                    !existing.TryGetValue(c.SessionId, out var sig)
+                    || sig.ticks != c.FileWriteTimeUtcTicks
+                    || sig.size != c.FileSize).ToList();
+
+                int done = total - needed.Count; // unchanged conversations count as already done
+                progress?.Report((done, total));
+
+                var po = new ParallelOptions
                 {
-                    foreach (var c in conversations)
+                    CancellationToken = token,
+                    MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1),
+                };
+
+                // Process in chunks: extract each chunk's text in PARALLEL (the heavy read + JSON
+                // parse), then write it in one transaction. Keeps memory bounded, commits
+                // incrementally (progress + cancellation-safe), and uses all cores for the slow part.
+                const int chunkSize = 48;
+                for (int i = 0; i < needed.Count; i += chunkSize)
+                {
+                    token.ThrowIfCancellationRequested();
+                    int len = Math.Min(chunkSize, needed.Count - i);
+                    var bodies = new string[len];
+                    Parallel.For(0, len, po, j =>
+                        bodies[j] = JsonlParser.ExtractFullText(new FileInfo(needed[i + j].FilePath)));
+
+                    using (var tx = conn.BeginTransaction())
                     {
-                        token.ThrowIfCancellationRequested();
-
-                        bool needs = !existing.TryGetValue(c.SessionId, out var sig)
-                                     || sig.ticks != c.FileWriteTimeUtcTicks
-                                     || sig.size != c.FileSize;
-
-                        if (needs)
+                        for (int j = 0; j < len; j++)
                         {
-                            var body = JsonlParser.ExtractFullText(new FileInfo(c.FilePath));
-                            DeleteById(conn, batch, c.SessionId);
-
+                            var c = needed[i + j];
+                            DeleteById(conn, tx, c.SessionId);
                             using (var ins = conn.CreateCommand())
                             {
-                                ins.Transaction = batch;
+                                ins.Transaction = tx;
                                 ins.CommandText = "INSERT INTO doc_fts(body, session_id) VALUES(@b, @id)";
-                                ins.Parameters.AddWithValue("@b", body);
+                                ins.Parameters.AddWithValue("@b", bodies[j]);
                                 ins.Parameters.AddWithValue("@id", c.SessionId);
                                 ins.ExecuteNonQuery();
                             }
                             using (var up = conn.CreateCommand())
                             {
-                                up.Transaction = batch;
+                                up.Transaction = tx;
                                 up.CommandText =
                                     "INSERT OR REPLACE INTO docs(session_id, file_path, write_ticks, size) " +
                                     "VALUES(@id, @p, @t, @s)";
@@ -146,24 +161,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS doc_fts USING fts5 (
                                 up.Parameters.AddWithValue("@s", c.FileSize);
                                 up.ExecuteNonQuery();
                             }
-
-                            if (++inBatch >= 25)
-                            {
-                                batch.Commit();
-                                batch.Dispose();
-                                batch = conn.BeginTransaction();
-                                inBatch = 0;
-                            }
                         }
-
-                        done++;
-                        if (done % step == 0) progress?.Report((done, total));
+                        tx.Commit();
                     }
-                    batch.Commit();
-                }
-                finally
-                {
-                    batch.Dispose();
+
+                    done += len;
+                    progress?.Report((done, total));
                 }
 
                 progress?.Report((total, total));
