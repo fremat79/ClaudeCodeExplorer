@@ -1,11 +1,14 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Data;
+using System.Windows.Threading;
 using ClaudeCodeExplorer.Models;
 using ClaudeCodeExplorer.Services;
 
@@ -14,7 +17,51 @@ namespace ClaudeCodeExplorer.ViewModels;
 public sealed class MainViewModel : ObservableObject
 {
     private readonly CacheService _cache = new();
+    private readonly SearchIndexService _index = new();
     private readonly ObservableCollection<ConversationInfo> _conversations = new();
+
+    /// <summary>Session ids matching the current query via the full-text index (added to the filter).</summary>
+    private HashSet<string> _ftsIds = new(StringComparer.Ordinal);
+    private CancellationTokenSource? _indexCts;
+    private Task? _indexTask;
+    private bool _isRebuilding;
+
+    /// <summary>Normalised query terms (accent/case-folded), computed once per query — not per item.</summary>
+    private string[] _queryTerms = Array.Empty<string>();
+    /// <summary>Coalesces keystrokes so filtering runs once the user pauses, not on every key.</summary>
+    private readonly DispatcherTimer _searchDebounce;
+
+    /// <summary>Max tiles rendered for a search. Caps the (non-virtualized) render cost per keystroke.</summary>
+    private const int MaxSearchResults = 120;
+    /// <summary>Remaining slots for the current filter pass; decremented as items pass the filter.</summary>
+    private int _matchBudget;
+
+    private bool _useFullTextSearch = SettingsService.GetFullTextEnabled();
+    /// <summary>
+    /// When true, search also consults the SQLite full-text index (whole conversation body) and the
+    /// index is built/kept in the background. Off by default; the choice is persisted across runs.
+    /// </summary>
+    public bool UseFullTextSearch
+    {
+        get => _useFullTextSearch;
+        set
+        {
+            if (!SetProperty(ref _useFullTextSearch, value)) return;
+            SettingsService.SetFullTextEnabled(value);
+            if (value)
+            {
+                StartIndexing();          // build/refresh the index in the background
+                ApplySearch();            // re-run current query, now including full-text
+            }
+            else
+            {
+                _indexCts?.Cancel();      // stop any running build
+                IsIndexing = false;
+                _ftsIds = new HashSet<string>(StringComparer.Ordinal);
+                RefreshResults();         // re-filter on metadata only
+            }
+        }
+    }
 
     /// <summary>Filtered + sorted view bound by the UI.</summary>
     public ICollectionView ConversationsView { get; }
@@ -23,7 +70,52 @@ public sealed class MainViewModel : ObservableObject
     public string SearchText
     {
         get => _searchText;
-        set { if (SetProperty(ref _searchText, value)) ConversationsView.Refresh(); }
+        set
+        {
+            if (!SetProperty(ref _searchText, value)) return;
+            // Debounce: (re)start the timer; the actual filtering runs once typing settles.
+            _searchDebounce.Stop();
+            _searchDebounce.Start();
+        }
+    }
+
+    /// <summary>
+    /// Applies the current query: normalises the terms once, refreshes the view (metadata match),
+    /// then launches the async full-text query which may add more results.
+    /// </summary>
+    private void ApplySearch()
+    {
+        _queryTerms = TextNormalizer.Normalize(_searchText)
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        _ftsIds = new HashSet<string>(StringComparer.Ordinal);
+        RefreshResults();
+        _ = RunFtsQueryAsync(_searchText);
+    }
+
+    /// <summary>
+    /// Re-applies the filter and updates the status. Resets the per-pass match budget first so the
+    /// filter renders at most <see cref="MaxSearchResults"/> tiles — bounding the (non-virtualized)
+    /// render cost of each keystroke.
+    /// </summary>
+    private void RefreshResults()
+    {
+        _matchBudget = MaxSearchResults;
+        ConversationsView.Refresh();
+        UpdateSearchStatus();
+    }
+
+    /// <summary>Reports how many conversations match, and whether the shown set was capped.</summary>
+    private void UpdateSearchStatus()
+    {
+        if (_queryTerms.Length == 0 && _ftsIds.Count == 0) { UpdateCountStatus(); return; }
+
+        int total = 0;
+        foreach (var c in _conversations)
+            if (Matches(c)) total++;
+
+        StatusText = total > MaxSearchResults
+            ? $"Showing {MaxSearchResults} of {total} matches — refine to see more"
+            : $"{total} match{(total == 1 ? "" : "es")}";
     }
 
     private bool _isLoading;
@@ -48,6 +140,30 @@ public sealed class MainViewModel : ObservableObject
         private set => SetProperty(ref _hasSelection, value);
     }
 
+    private bool _isIndexing;
+    /// <summary>True while the full-text index is being (re)built — drives the progress strip's visibility.</summary>
+    public bool IsIndexing
+    {
+        get => _isIndexing;
+        private set => SetProperty(ref _isIndexing, value);
+    }
+
+    private double _indexingProgress;
+    /// <summary>Full-text index build progress, 0–100.</summary>
+    public double IndexingProgress
+    {
+        get => _indexingProgress;
+        private set => SetProperty(ref _indexingProgress, value);
+    }
+
+    private string _indexingText = "";
+    /// <summary>Human-readable index progress, e.g. "Indexing full-text search: 42% (296/700)".</summary>
+    public string IndexingText
+    {
+        get => _indexingText;
+        private set => SetProperty(ref _indexingText, value);
+    }
+
     private int _retentionDays = 180;
     /// <summary>Age threshold (in days) for the "delete older than" maintenance action. Never below 1.</summary>
     public int RetentionDays
@@ -69,6 +185,7 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand SelectAllInGroupCommand { get; }
     public RelayCommand ClearSelectionCommand { get; }
     public RelayCommand DeleteSelectedCommand { get; }
+    public RelayCommand RebuildIndexCommand { get; }
 
     public MainViewModel()
     {
@@ -81,6 +198,9 @@ public sealed class MainViewModel : ObservableObject
         ConversationsView.GroupDescriptions.Add(
             new PropertyGroupDescription(nameof(ConversationInfo.WorkingDirectory)));
         ConversationsView.Filter = FilterPredicate;
+
+        _searchDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
+        _searchDebounce.Tick += (_, _) => { _searchDebounce.Stop(); ApplySearch(); };
 
         RefreshCommand = new RelayCommand(_ => _ = LoadAsync());
         ResumeCommand = new RelayCommand(p => Run(() => { if (p is ConversationInfo c) TerminalLauncher.Resume(c); }));
@@ -95,6 +215,7 @@ public sealed class MainViewModel : ObservableObject
         SelectAllInGroupCommand = new RelayCommand(SelectAllInGroup);
         ClearSelectionCommand = new RelayCommand(_ => ClearSelection());
         DeleteSelectedCommand = new RelayCommand(_ => Run(DeleteSelected));
+        RebuildIndexCommand = new RelayCommand(_ => _ = RebuildIndexAsync());
 
         _cache.Load();
         _ = LoadAsync();
@@ -102,10 +223,51 @@ public sealed class MainViewModel : ObservableObject
 
     private bool FilterPredicate(object obj)
     {
-        if (string.IsNullOrWhiteSpace(_searchText)) return true;
+        if (_queryTerms.Length == 0) return true;   // no active query → show everything
         if (obj is not ConversationInfo c) return false;
-        var q = _searchText.Trim().ToLowerInvariant();
-        return c.SearchBlob.Contains(q, StringComparison.Ordinal);
+        if (!Matches(c)) return false;
+
+        // Cap the number of rendered results so a broad query doesn't materialise hundreds of
+        // (non-virtualized) tiles per keystroke. The source is recency-desc, so we keep the newest.
+        if (_matchBudget <= 0) return false;
+        _matchBudget--;
+        return true;
+    }
+
+    /// <summary>
+    /// Whether a conversation matches the current query: every pre-normalised term present in the
+    /// metadata blob (computed once per query), or a full-text hit from the background index.
+    /// </summary>
+    private bool Matches(ConversationInfo c)
+    {
+        var blob = c.NormalizedSearchBlob;
+        foreach (var t in _queryTerms)
+        {
+            if (!blob.Contains(t, StringComparison.Ordinal))
+                return _ftsIds.Contains(c.SessionId);
+        }
+        return true;
+    }
+
+    /// <summary>Runs the full-text query off the UI thread and, if still current, folds the hits into the view.</summary>
+    private async Task RunFtsQueryAsync(string query)
+    {
+        if (!_useFullTextSearch) return; // full-text is opt-in
+        var q = query?.Trim() ?? "";
+        if (q.Length < 2) return; // too short to be worth a full-text pass
+
+        HashSet<string> ids;
+        try { ids = await Task.Run(() => _index.Search(q)); }
+        catch { return; }
+
+        // Discard if the user has typed more since this query was issued.
+        if (!string.Equals(_searchText.Trim(), q, StringComparison.Ordinal)) return;
+
+        // Only re-filter if the full-text hits actually change the set (avoids a redundant reset).
+        if (_ftsIds.SetEquals(ids)) return;
+
+        _ftsIds = ids;
+        RefreshResults();
     }
 
     private async Task LoadAsync()
@@ -144,6 +306,89 @@ public sealed class MainViewModel : ObservableObject
         finally
         {
             IsLoading = false;
+        }
+
+        // Build the full-text index only when the feature is enabled.
+        if (_useFullTextSearch) StartIndexing();
+    }
+
+    /// <summary>Fire-and-forget background index build over the current conversations (used after each scan).</summary>
+    private void StartIndexing() => _ = RunIndexBuildAsync(cancelPrevious: true);
+
+    /// <summary>
+    /// Runs the full-text index build over the current conversations, reporting progress to
+    /// <see cref="IsIndexing"/> / <see cref="IndexingProgress"/> / <see cref="IndexingText"/> on the
+    /// UI thread. The heavy work is on a background thread, so the UI stays responsive. Awaitable so
+    /// callers (e.g. rebuild) can act on completion. Never throws.
+    /// </summary>
+    private async Task RunIndexBuildAsync(bool cancelPrevious)
+    {
+        if (cancelPrevious)
+        {
+            _indexCts?.Cancel();
+            if (_indexTask is not null) { try { await _indexTask; } catch { } }
+        }
+
+        _indexCts = new CancellationTokenSource();
+        var token = _indexCts.Token;
+
+        var snapshot = _conversations.ToList();
+        if (snapshot.Count == 0) { IsIndexing = false; return; }
+
+        // Progress<T> created here captures the UI SynchronizationContext, so the callback is safe.
+        var progress = new Progress<(int done, int total)>(p =>
+        {
+            IndexingProgress = p.total == 0 ? 100 : 100.0 * p.done / p.total;
+            IndexingText = $"Indexing full-text search: {(int)IndexingProgress}% ({p.done}/{p.total})";
+            IsIndexing = p.done < p.total;
+        });
+
+        IsIndexing = true;
+        IndexingProgress = 0;
+        IndexingText = "Indexing full-text search…";
+
+        _indexTask = _index.BuildAsync(snapshot, progress, token);
+        try { await _indexTask; } catch { /* build is best-effort */ }
+    }
+
+    /// <summary>
+    /// Rebuilds the full-text index from scratch: cancels any running build, closes and deletes the
+    /// DB, then re-indexes everything with visible progress, and finally reports a summary.
+    /// </summary>
+    private async Task RebuildIndexAsync()
+    {
+        if (_isRebuilding) return;
+        _isRebuilding = true;
+        try
+        {
+            // A/B: stop the current build and delete the database (off the UI thread).
+            _indexCts?.Cancel();
+            if (_indexTask is not null) { try { await _indexTask; } catch { } }
+            await Task.Run(() => _index.DeleteDatabase());
+
+            // C: reindex everything from scratch, progress shown on the bottom status bar.
+            await RunIndexBuildAsync(cancelPrevious: false);
+
+            // D: summary.
+            int convs = _conversations.Count;
+            int folders = _conversations
+                .Select(c => c.WorkingDirectory)
+                .Where(w => !string.IsNullOrWhiteSpace(w))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+            MessageBox.Show(
+                $"Full-text index rebuilt.\n\n{convs} conversation{(convs == 1 ? "" : "s")} indexed "
+                + $"across {folders} folder{(folders == 1 ? "" : "s")}.",
+                "Claude Code Explorer", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Could not rebuild the index:\n\n" + ex.Message,
+                "Claude Code Explorer", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            _isRebuilding = false;
         }
     }
 
@@ -297,6 +542,7 @@ public sealed class MainViewModel : ObservableObject
         TryRemoveEmptyProjectFolder(c.FilePath);
 
         _cache.Remove(c.FilePath);
+        _index.Remove(c.SessionId);   // drop it from the full-text index too (best-effort)
         c.PropertyChanged -= OnConversationPropertyChanged;
         _conversations.Remove(c);
     }

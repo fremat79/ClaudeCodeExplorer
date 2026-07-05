@@ -94,4 +94,12 @@ public sealed class ConversationInfo : INotifyPropertyChanged
         _searchBlob ??= string.Join('\n',
             Title, CustomTitle ?? "", FirstUserMessage, ProjectName, WorkingDirectory, GitBranch ?? "", SessionId)
             .ToLowerInvariant();
+
+    [JsonIgnore]
+    private string? _normalizedSearchBlob;
+
+    /// <summary>Accent- and case-insensitive form of <see cref="SearchBlob"/> for the in-memory filter.</summary>
+    [JsonIgnore]
+    public string NormalizedSearchBlob =>
+        _normalizedSearchBlob ??= Services.TextNormalizer.Normalize(SearchBlob);
 }

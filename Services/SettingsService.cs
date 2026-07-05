@@ -10,6 +10,9 @@ public sealed class AppSettings
 
     /// <summary>True once we've asked the user about enabling autostart (so we don't nag).</summary>
     public bool AutostartPrompted { get; set; }
+
+    /// <summary>Whether search also consults the SQLite full-text index. Off by default.</summary>
+    public bool FullTextSearchEnabled { get; set; }
 }
 
 /// <summary>Tiny JSON settings store in %LOCALAPPDATA%\ClaudeCodeExplorer\settings.json.</summary>
@@ -34,6 +37,15 @@ public static class SettingsService
     {
         var s = Load();
         s.AutostartPrompted = true;
+        Save(s);
+    }
+
+    public static bool GetFullTextEnabled() => Load().FullTextSearchEnabled;
+
+    public static void SetFullTextEnabled(bool enabled)
+    {
+        var s = Load();
+        s.FullTextSearchEnabled = enabled;
         Save(s);
     }
 

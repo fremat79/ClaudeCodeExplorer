@@ -16,6 +16,9 @@ public static class JsonlParser
     private const int MaxStoredMessageChars = 1000;
     private const int MaxTitleChars = 200;
 
+    /// <summary>Upper bound on characters indexed per conversation, to keep the search DB sane.</summary>
+    private const int MaxIndexedTextChars = 200_000;
+
     public static ConversationInfo? Parse(FileInfo file)
     {
         var info = new ConversationInfo
@@ -154,6 +157,51 @@ public static class JsonlParser
         info.CustomTitle = customTitle;
         info.ProjectName = DeriveProjectName(info.WorkingDirectory, info.ProjectFolderName);
         return info;
+    }
+
+    /// <summary>
+    /// Reads the full conversation body (all real user + assistant text) for full-text indexing.
+    /// Reuses <see cref="ExtractText"/> (which already ignores tool-use / thinking blocks); skips
+    /// isMeta lines and command/system boilerplate, and caps total length. Never throws.
+    /// </summary>
+    public static string ExtractFullText(FileInfo file)
+    {
+        var sb = new StringBuilder();
+        try
+        {
+            foreach (var raw in File.ReadLines(file.FullName))
+            {
+                if (string.IsNullOrWhiteSpace(raw)) continue;
+
+                JsonDocument doc;
+                try { doc = JsonDocument.Parse(raw); }
+                catch { continue; }
+
+                using (doc)
+                {
+                    var root = doc.RootElement;
+                    if (root.ValueKind != JsonValueKind.Object) continue;
+
+                    var type = root.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String
+                        ? t.GetString() : null;
+                    if (type != "user" && type != "assistant") continue;
+                    if (IsMeta(root)) continue;
+
+                    var text = ExtractText(root).Trim();
+                    if (text.Length == 0) continue;
+                    if (type == "user" && LooksLikeCommandOrSystem(text)) continue;
+
+                    sb.Append(text).Append('\n');
+                    if (sb.Length >= MaxIndexedTextChars) break;
+                }
+            }
+        }
+        catch (IOException)
+        {
+            // File in use / truncated mid-read: index whatever we gathered so far.
+        }
+
+        return sb.ToString();
     }
 
     private static bool IsMeta(JsonElement root)
