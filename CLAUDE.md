@@ -15,7 +15,7 @@ original working directory and runs `claude --resume <sessionId>`.
 dotnet build                                   # Debug build
 dotnet build -c Release                        # Release (DebugType=none)
 dotnet run                                      # build + launch (starts hidden in the tray)
-dotnet publish -p:PublishProfile=FolderProfile  # single-file, framework-dependent, win-x64, R2R
+dotnet publish -p:PublishProfile=FolderProfile  # single-file, self-contained, win-x64, R2R
 ```
 
 There is no test project and no linter configured — build is the only gate.
