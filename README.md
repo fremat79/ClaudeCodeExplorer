@@ -58,7 +58,7 @@ See [`WHATS-NEW.md`](WHATS-NEW.md) for the latest additions.
 
 - **Windows** (10/11).
 - **[.NET 10 SDK](https://dotnet.microsoft.com/download)** to build/run from source (a published
-  build only needs the .NET 10 **Desktop Runtime**).
+  build is self-contained and needs no separate runtime install).
 - **[Claude Code](https://claude.com/claude-code)** installed and used at least once (so
   `~/.claude/projects` exists). The `claude` CLI must be on your `PATH` for *Resume* to work.
 - **Windows Terminal** (`wt.exe`) recommended; the app falls back to `powershell.exe` if it isn't
@@ -225,12 +225,12 @@ all real work lives in stateless `static` services. The only runtime dependency 
 dotnet build                                    # Debug build
 dotnet build -c Release                         # Release
 dotnet run                                       # build + launch (starts in the tray)
-dotnet publish -p:PublishProfile=FolderProfile   # single-file, framework-dependent, win-x64, R2R
+dotnet publish -p:PublishProfile=FolderProfile   # single-file, self-contained, win-x64, R2R
 ```
 
-The publish profile produces a single-file, framework-dependent executable for `win-x64`
-(the native `e_sqlite3.dll` is placed next to the `.exe`). There is no test project — the build is
-the only gate.
+The publish profile produces a single-file, self-contained executable for `win-x64` (bundling the
+.NET runtime, so no separate runtime install is needed on the target machine; the native
+`e_sqlite3.dll` is placed next to the `.exe`). There is no test project — the build is the only gate.
 
 ---
 

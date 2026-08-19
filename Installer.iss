@@ -70,52 +70,6 @@ Name: "{userdesktop}\{#MyAppName}";     Filename: "{app}\{#MyAppExeName}"; Tasks
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-{ ---- .NET 10 Desktop Runtime presence check (framework-dependent build) ---- }
-function DirHasNet10(Dir: String): Boolean;
-var
-  FR: TFindRec;
-begin
-  Result := False;
-  if FindFirst(Dir + '\10.*', FR) then
-  try
-    repeat
-      if (FR.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
-      begin
-        Result := True;
-        Break;
-      end;
-    until not FindNext(FR);
-  finally
-    FindClose(FR);
-  end;
-end;
-
-function DotNetDesktop10Installed(): Boolean;
-begin
-  Result :=
-    DirHasNet10(ExpandConstant('{pf64}\dotnet\shared\Microsoft.WindowsDesktop.App')) or
-    DirHasNet10(ExpandConstant('{pf}\dotnet\shared\Microsoft.WindowsDesktop.App'));
-end;
-
-function InitializeSetup(): Boolean;
-var
-  ErrorCode: Integer;
-begin
-  Result := True;
-  if not DotNetDesktop10Installed() then
-  begin
-    if MsgBox(
-        'This app requires the .NET 10 Desktop Runtime (x64), which was not found.' + #13#10#13#10 +
-        'Click Yes to open the download page now (install it, then re-run this setup),' + #13#10 +
-        'or No to continue anyway if you know it is installed.',
-        mbConfirmation, MB_YESNO) = IDYES then
-    begin
-      ShellExec('open', 'https://dotnet.microsoft.com/download/dotnet/10.0', '', '', SW_SHOW, ewNoWait, ErrorCode);
-      Result := False; { stop so the user can install the runtime first }
-    end;
-  end;
-end;
-
 { ---- Close a running instance so files aren't locked ---- }
 procedure KillRunning();
 var

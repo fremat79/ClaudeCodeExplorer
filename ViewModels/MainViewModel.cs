@@ -177,7 +177,9 @@ public sealed class MainViewModel : ObservableObject
 
     /// <summary>
     /// Defaults the retention threshold to the age (in whole days) of the oldest conversation, so
-    /// "Delete older" would include it. Skipped once the user has set the value manually.
+    /// "Delete older" would include it. Re-run after every deletion (not just on load/refresh) so
+    /// repeated "Delete older" clicks cascade inward onto the next-oldest survivor instead of
+    /// leaving a stale threshold behind. Skipped once the user has set the value manually.
     /// </summary>
     private void ApplyDefaultRetentionDays()
     {
@@ -466,6 +468,7 @@ public sealed class MainViewModel : ObservableObject
         RemoveConversationCore(c);
         ConversationsView.Refresh();
         UpdateCountStatus();
+        ApplyDefaultRetentionDays(); // the oldest conversation may have just been removed
     }
 
     /// <summary>Delete every conversation with no messages, after a single confirmation.</summary>
@@ -490,6 +493,7 @@ public sealed class MainViewModel : ObservableObject
         foreach (var c in empties) RemoveConversationCore(c);
         ConversationsView.Refresh();
         UpdateCountStatus();
+        ApplyDefaultRetentionDays(); // the oldest conversation may have just been removed
     }
 
     /// <summary>
@@ -530,6 +534,8 @@ public sealed class MainViewModel : ObservableObject
         foreach (var c in old) RemoveConversationCore(c);
         ConversationsView.Refresh();
         UpdateCountStatus();
+        ApplyDefaultRetentionDays(); // re-anchor the threshold to the next-oldest survivor, so
+                                     // repeated clicks cascade inward (e.g. 400 -> 90 -> 60 days)
     }
 
     /// <summary>
@@ -615,6 +621,7 @@ public sealed class MainViewModel : ObservableObject
         foreach (var c in selected) RemoveConversationCore(c);
         ConversationsView.Refresh();
         UpdateCountStatus();
+        ApplyDefaultRetentionDays(); // the oldest conversation may have just been removed
     }
 
     /// <summary>
