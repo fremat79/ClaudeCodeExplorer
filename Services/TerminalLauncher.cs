@@ -67,6 +67,7 @@ public static class TerminalLauncher
         // Never hand Windows Terminal a non-existent starting directory – it errors with
         // 0x8007010B ("The directory name is invalid"). Substitute the home folder instead.
         var startDir = Directory.Exists(cwd) ? cwd : UserProfile;
+        var shellExe = ResolveShellExe();
 
         // Preferred path: Windows Terminal. UseShellExecute=true lets the app-execution
         // alias (wt.exe) resolve, and throws cleanly if it is not installed.
@@ -77,7 +78,7 @@ public static class TerminalLauncher
             wt.ArgumentList.Add(startDir);
             if (command is not null)
             {
-                wt.ArgumentList.Add("powershell.exe");
+                wt.ArgumentList.Add(shellExe);
                 wt.ArgumentList.Add("-NoExit");
                 wt.ArgumentList.Add("-Command");
                 wt.ArgumentList.Add(command);
@@ -87,12 +88,12 @@ public static class TerminalLauncher
         }
         catch
         {
-            // Windows Terminal unavailable – fall through to PowerShell.
+            // Windows Terminal unavailable – fall through to a plain PowerShell window.
         }
 
         var ps = new ProcessStartInfo
         {
-            FileName = "powershell.exe",
+            FileName = shellExe,
             UseShellExecute = true,
             WorkingDirectory = startDir,
         };
@@ -103,5 +104,29 @@ public static class TerminalLauncher
             ps.ArgumentList.Add(command);
         }
         Process.Start(ps);
+    }
+
+    /// <summary>
+    /// Prefers PowerShell 7+ (<c>pwsh.exe</c>) when it's on PATH, falling back to the legacy
+    /// Windows PowerShell (<c>powershell.exe</c>, always present) otherwise. Resolved once per
+    /// launch rather than cached, since it's cheap and the user could install/remove pwsh
+    /// between runs.
+    /// </summary>
+    private static string ResolveShellExe()
+    {
+        var pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var dir in pathVar.Split(Path.PathSeparator))
+        {
+            try
+            {
+                if (File.Exists(Path.Combine(dir, "pwsh.exe")))
+                    return "pwsh.exe";
+            }
+            catch
+            {
+                // Malformed PATH entry – skip it.
+            }
+        }
+        return "powershell.exe";
     }
 }
