@@ -29,8 +29,14 @@ all real work lives in stateless `static` service classes under `Services/`.
 `ProjectScanner.Scan` enumerates `~/.claude/projects/<encoded-path>/*.jsonl` →
 for each file, `CacheService.TryGet` returns a cached `ConversationInfo` if the file's
 last-write-time-ticks **and** size are unchanged, otherwise `JsonlParser.Parse` reads it →
-results sorted by `LastActivityUtc` desc → surfaced through `MainViewModel.ConversationsView`
-(an `ICollectionView` that filters by `SearchBlob` and groups by `WorkingDirectory`).
+results sorted by `IsFavorite` desc, then `LastActivityUtc` desc → surfaced through
+`MainViewModel.ConversationsView` (an `ICollectionView` that filters by `SearchBlob` and groups by
+`GroupKey`: the `WorkingDirectory`, or the `"<favorites>"` sentinel for starred conversations).
+
+**Favorites:** starred session ids live in `settings.json` (`SettingsService`), *not* in the parse
+cache — a cache entry is replaced whenever its `.jsonl` changes, which would drop the flag.
+`IsFavorite` is applied after each scan; sorting favorites first is what pins their group on top
+(groups follow the order of their first item). Favorites are exempt from the search result cap.
 
 Scanning runs on a background thread (`Task.Run`) and parses files in parallel
 (`Parallel.ForEach`). The parse result cache is persisted to

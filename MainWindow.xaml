@@ -205,6 +205,43 @@
             </Setter>
         </Style>
 
+        <!-- Card favorite (star) toggle: hollow when off, filled accent star when on -->
+        <Style x:Key="CardFavoriteButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="22"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="VerticalAlignment" Value="Top"/>
+            <Setter Property="Margin" Value="0,-4,20,0"/>
+            <Setter Property="Content" Value="&#x2606;"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextMuted}"/>
+            <Setter Property="ToolTip" Value="Add to favorites"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="fb" CornerRadius="11" Background="Transparent">
+                            <TextBlock Text="{TemplateBinding Content}" FontSize="14"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="fb" Property="Background" Value="{DynamicResource ToolButtonHover}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Accent}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsFavorite}" Value="True">
+                    <Setter Property="Content" Value="&#x2605;"/>
+                    <Setter Property="Foreground" Value="{DynamicResource Accent}"/>
+                    <Setter Property="ToolTip" Value="Remove from favorites"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <!-- Batch-selection checkbox on each tile -->
         <Style x:Key="TileCheckBoxStyle" TargetType="CheckBox">
             <Setter Property="Cursor" Value="Hand"/>
@@ -282,6 +319,20 @@
                                   Command="{Binding PlacementTarget.Tag.OpenFolderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                   CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
                         <Separator/>
+                        <MenuItem Command="{Binding PlacementTarget.Tag.ToggleFavoriteCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+                            <MenuItem.Style>
+                                <Style TargetType="MenuItem">
+                                    <Setter Property="Header" Value="Add to favorites"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding PlacementTarget.DataContext.IsFavorite, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Value="True">
+                                            <Setter Property="Header" Value="Remove from favorites"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </MenuItem.Style>
+                        </MenuItem>
+                        <Separator/>
                         <MenuItem Header="Copy session id"
                                   Command="{Binding PlacementTarget.Tag.CopyIdCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                   CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
@@ -306,9 +357,14 @@
                               HorizontalAlignment="Left" VerticalAlignment="Top" Margin="-2,-2,0,0"
                               IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
 
-                    <TextBlock Grid.Row="0" Text="{Binding DisplayName}" Margin="24,0,24,0"
+                    <TextBlock Grid.Row="0" Text="{Binding DisplayName}" Margin="24,0,46,0"
                                Foreground="{DynamicResource Accent}" FontSize="11" FontWeight="SemiBold"
                                TextTrimming="CharacterEllipsis"/>
+
+                    <!-- Favorite (star) toggle, left of the delete button -->
+                    <Button Grid.Row="0" Grid.RowSpan="3" Style="{StaticResource CardFavoriteButtonStyle}"
+                            Command="{Binding DataContext.ToggleFavoriteCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                            CommandParameter="{Binding}"/>
 
                     <!-- Delete (X) button, top-right corner -->
                     <Button Grid.Row="0" Grid.RowSpan="3" Style="{StaticResource CardCloseButtonStyle}"
@@ -321,9 +377,20 @@
                                VerticalAlignment="Top"/>
 
                     <Grid Grid.Row="2">
-                        <TextBlock HorizontalAlignment="Left" FontSize="11" Foreground="{DynamicResource TextMuted}"
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" FontSize="11" Foreground="{DynamicResource TextMuted}"
                                    Text="{Binding LastActivityUtc, Converter={StaticResource RelTime}}"/>
-                        <TextBlock HorizontalAlignment="Right" FontSize="11" Foreground="{DynamicResource TextMuted}"
+                        <!-- Project folder, only on favorites: their group spans many folders -->
+                        <TextBlock Grid.Column="1" Margin="4,0,8,0" FontSize="11"
+                                   Foreground="{DynamicResource TextSecondary}"
+                                   Text="{Binding ProjectName, StringFormat='· {0}'}"
+                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding WorkingDirectory}"
+                                   Visibility="{Binding IsFavorite, Converter={StaticResource BoolToVis}}"/>
+                        <TextBlock Grid.Column="2" FontSize="11" Foreground="{DynamicResource TextMuted}"
                                    Text="{Binding MessageCount, StringFormat='{}{0} msgs'}"/>
                     </Grid>
                 </Grid>
@@ -392,16 +459,17 @@
                                 <Setter Property="Template">
                                     <Setter.Value>
                                         <ControlTemplate TargetType="GroupItem">
-                                            <Expander IsExpanded="True" Margin="0,4,0,10"
+                                            <Expander x:Name="groupExpander" IsExpanded="True" Margin="0,4,0,10"
                                                       Background="Transparent" BorderThickness="0"
                                                       Foreground="{DynamicResource TextPrimary}">
                                                 <Expander.Header>
                                                     <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
-                                                        <TextBlock Text="{Binding Name, Converter={StaticResource PathLeaf}}"
+                                                        <TextBlock x:Name="groupTitle"
+                                                                   Text="{Binding Name, Converter={StaticResource PathLeaf}}"
                                                                    FontSize="14" FontWeight="SemiBold"
                                                                    Foreground="{DynamicResource TextPrimary}"
                                                                    VerticalAlignment="Center"/>
-                                                        <TextBlock Text="{Binding Name}" Margin="12,0,0,0"
+                                                        <TextBlock x:Name="groupPath" Text="{Binding Name}" Margin="12,0,0,0"
                                                                    FontSize="11" Foreground="{DynamicResource TextMuted}"
                                                                    VerticalAlignment="Center"
                                                                    MaxWidth="560"
@@ -419,7 +487,7 @@
                                                                 ToolTip="Select or clear every conversation in this folder"
                                                                 Command="{Binding DataContext.SelectAllInGroupCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                                                 CommandParameter="{Binding}"/>
-                                                        <Button Content="Inspect settings" Style="{StaticResource GroupActionButtonStyle}"
+                                                        <Button x:Name="groupInspect" Content="Inspect settings" Style="{StaticResource GroupActionButtonStyle}"
                                                                 ToolTip="Show the effective Claude config for this folder"
                                                                 Command="{Binding DataContext.InspectSettingsCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                                                 CommandParameter="{Binding}"/>
@@ -437,6 +505,16 @@
                                                 </Expander.ContextMenu>
                                                 <ItemsPresenter Margin="0,4,0,4"/>
                                             </Expander>
+                                            <ControlTemplate.Triggers>
+                                                <!-- The pinned favorites group spans many folders: no path, no config inspector -->
+                                                <DataTrigger Binding="{Binding Name}" Value="{x:Static models:ConversationInfo.FavoritesGroupKey}">
+                                                    <Setter TargetName="groupTitle" Property="Text" Value="&#x2605; Favorites"/>
+                                                    <Setter TargetName="groupTitle" Property="Foreground" Value="{DynamicResource Accent}"/>
+                                                    <Setter TargetName="groupPath" Property="Visibility" Value="Collapsed"/>
+                                                    <Setter TargetName="groupInspect" Property="Visibility" Value="Collapsed"/>
+                                                    <Setter TargetName="groupExpander" Property="ContextMenu" Value="{x:Null}"/>
+                                                </DataTrigger>
+                                            </ControlTemplate.Triggers>
                                         </ControlTemplate>
                                     </Setter.Value>
                                 </Setter>
