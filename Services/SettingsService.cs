@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -13,6 +14,9 @@ public sealed class AppSettings
 
     /// <summary>Whether search also consults the SQLite full-text index. Off by default.</summary>
     public bool FullTextSearchEnabled { get; set; }
+
+    /// <summary>Session ids the user starred. Kept here, not in the parse cache, so it survives re-parses.</summary>
+    public List<string> FavoriteSessionIds { get; set; } = new();
 }
 
 /// <summary>Tiny JSON settings store in %LOCALAPPDATA%\ClaudeCodeExplorer\settings.json.</summary>
@@ -46,6 +50,16 @@ public static class SettingsService
     {
         var s = Load();
         s.FullTextSearchEnabled = enabled;
+        Save(s);
+    }
+
+    public static HashSet<string> GetFavorites() => new(Load().FavoriteSessionIds, StringComparer.Ordinal);
+
+    public static void SetFavorite(string sessionId, bool favorite)
+    {
+        var s = Load();
+        s.FavoriteSessionIds.RemoveAll(id => string.Equals(id, sessionId, StringComparison.Ordinal));
+        if (favorite) s.FavoriteSessionIds.Add(sessionId);
         Save(s);
     }
 

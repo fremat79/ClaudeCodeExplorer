@@ -102,6 +102,20 @@ public sealed class MainViewModel : ObservableObject
         UpdateSearchStatus();
     }
 
+    /// <summary>
+    /// Re-renders after conversations were added or removed (rescan / deletions). Goes through
+    /// <see cref="RefreshResults"/> so an active search gets a fresh result cap — a bare
+    /// <c>ConversationsView.Refresh()</c> would reuse the budget already spent and hide tiles.
+    /// Also re-syncs the selection state (removed items raise no change) and re-anchors the
+    /// retention threshold, since the oldest conversation may have just been removed.
+    /// </summary>
+    private void RefreshAfterCollectionChange()
+    {
+        RefreshResults();
+        HasSelection = _conversations.Any(c => c.IsSelected);
+        ApplyDefaultRetentionDays();
+    }
+
     /// <summary>Reports how many conversations match, and whether the shown set was capped.</summary>
     private void UpdateSearchStatus()
     {
@@ -228,6 +242,7 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand OpenFolderCommand { get; }
     public RelayCommand CopyIdCommand { get; }
     public RelayCommand DeleteCommand { get; }
+    public RelayCommand ToggleFavoriteCommand { get; }
     public RelayCommand DeleteEmptyCommand { get; }
     public RelayCommand DeleteOlderCommand { get; }
     public RelayCommand IncrementDaysCommand { get; }
@@ -244,13 +259,18 @@ public sealed class MainViewModel : ObservableObject
     public MainViewModel()
     {
         ConversationsView = CollectionViewSource.GetDefaultView(_conversations);
+        // Favorites sort first: groups are laid out in the order of their first item, so this is
+        // what pins the favorites group above every project group.
+        ConversationsView.SortDescriptions.Add(
+            new SortDescription(nameof(ConversationInfo.IsFavorite), ListSortDirection.Descending));
         ConversationsView.SortDescriptions.Add(
             new SortDescription(nameof(ConversationInfo.LastActivityUtc), ListSortDirection.Descending));
         // Group by the full working directory (unique), then we display the project's
-        // last path segment in the header via PathLeafConverter. Filter is applied
-        // before grouping, so groups with no matching items simply do not appear.
+        // last path segment in the header via PathLeafConverter. Favorites get their own
+        // group instead (see ConversationInfo.GroupKey). Filter is applied before
+        // grouping, so groups with no matching items simply do not appear.
         ConversationsView.GroupDescriptions.Add(
-            new PropertyGroupDescription(nameof(ConversationInfo.WorkingDirectory)));
+            new PropertyGroupDescription(nameof(ConversationInfo.GroupKey)));
         ConversationsView.Filter = FilterPredicate;
 
         _searchDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
@@ -262,6 +282,7 @@ public sealed class MainViewModel : ObservableObject
         OpenFolderCommand = new RelayCommand(p => Run(() => { if (p is ConversationInfo c) TerminalLauncher.OpenInExplorer(c); }));
         CopyIdCommand = new RelayCommand(p => Run(() => { if (p is ConversationInfo c) Clipboard.SetText(c.SessionId); }));
         DeleteCommand = new RelayCommand(p => Run(() => { if (p is ConversationInfo c) Delete(c); }));
+        ToggleFavoriteCommand = new RelayCommand(p => Run(() => { if (p is ConversationInfo c) ToggleFavorite(c); }));
         DeleteEmptyCommand = new RelayCommand(_ => Run(DeleteEmpty));
         DeleteOlderCommand = new RelayCommand(_ => Run(DeleteOlder));
         IncrementDaysCommand = new RelayCommand(_ => RetentionDays++);
@@ -286,6 +307,9 @@ public sealed class MainViewModel : ObservableObject
         if (_queryTerms.Length == 0) return true;   // no active query → show everything
         if (obj is not ConversationInfo c) return false;
         if (!Matches(c)) return false;
+
+        // Favorites are pinned on top: always show a matching one, without spending the cap on it.
+        if (c.IsFavorite) return true;
 
         // Cap the number of rendered results so a broad query doesn't materialise hundreds of
         // (non-virtualized) tiles per keystroke. The source is recency-desc, so we keep the newest.
@@ -338,26 +362,22 @@ public sealed class MainViewModel : ObservableObject
         {
             var list = await Task.Run(() => ProjectScanner.Scan(_cache));
 
+            var favorites = SettingsService.GetFavorites();
             foreach (var c in _conversations) c.PropertyChanged -= OnConversationPropertyChanged;
             _conversations.Clear();
             foreach (var c in list)
             {
+                c.IsFavorite = favorites.Contains(c.SessionId);
                 c.PropertyChanged += OnConversationPropertyChanged;
                 _conversations.Add(c);
             }
-            ConversationsView.Refresh();
+            RefreshAfterCollectionChange();
 
-            if (list.Count > 0)
-            {
-                UpdateCountStatus();
-                ApplyDefaultRetentionDays(); // default the threshold to the oldest conversation's age
-            }
-            else
+            if (list.Count == 0)
             {
                 StatusText = Directory.Exists(ProjectScanner.ProjectsRoot)
                     ? "No conversations found."
                     : $"Folder not found: {ProjectScanner.ProjectsRoot}";
-                HasSelection = false;
             }
         }
         catch (Exception ex)
@@ -466,9 +486,18 @@ public sealed class MainViewModel : ObservableObject
         if (answer != MessageBoxResult.Yes) return;
 
         RemoveConversationCore(c);
-        ConversationsView.Refresh();
-        UpdateCountStatus();
-        ApplyDefaultRetentionDays(); // the oldest conversation may have just been removed
+        RefreshAfterCollectionChange();
+    }
+
+    /// <summary>
+    /// Stars or un-stars a conversation (clicking the star again removes it), persists the choice and
+    /// re-sorts the view so the tile moves into / out of the favorites group pinned on top.
+    /// </summary>
+    private void ToggleFavorite(ConversationInfo c)
+    {
+        c.IsFavorite = !c.IsFavorite;
+        SettingsService.SetFavorite(c.SessionId, c.IsFavorite);
+        RefreshResults();
     }
 
     /// <summary>Delete every conversation with no messages, after a single confirmation.</summary>
@@ -491,9 +520,7 @@ public sealed class MainViewModel : ObservableObject
         if (answer != MessageBoxResult.Yes) return;
 
         foreach (var c in empties) RemoveConversationCore(c);
-        ConversationsView.Refresh();
-        UpdateCountStatus();
-        ApplyDefaultRetentionDays(); // the oldest conversation may have just been removed
+        RefreshAfterCollectionChange();
     }
 
     /// <summary>
@@ -532,10 +559,8 @@ public sealed class MainViewModel : ObservableObject
         if (answer != MessageBoxResult.Yes) return;
 
         foreach (var c in old) RemoveConversationCore(c);
-        ConversationsView.Refresh();
-        UpdateCountStatus();
-        ApplyDefaultRetentionDays(); // re-anchor the threshold to the next-oldest survivor, so
-                                     // repeated clicks cascade inward (e.g. 400 -> 90 -> 60 days)
+        RefreshAfterCollectionChange(); // re-anchors the threshold to the next-oldest survivor, so
+                                        // repeated clicks cascade inward (e.g. 400 -> 90 -> 60 days)
     }
 
     /// <summary>
@@ -555,6 +580,7 @@ public sealed class MainViewModel : ObservableObject
     {
         if (parameter is not CollectionViewGroup group) return;
         var folder = group.Name as string ?? "";
+        if (folder == ConversationInfo.FavoritesGroupKey) return; // spans many folders – nothing to inspect
 
         InspectorNodes.Clear();
         foreach (var node in ClaudeConfigInspector.Inspect(folder))
@@ -619,9 +645,7 @@ public sealed class MainViewModel : ObservableObject
         if (answer != MessageBoxResult.Yes) return;
 
         foreach (var c in selected) RemoveConversationCore(c);
-        ConversationsView.Refresh();
-        UpdateCountStatus();
-        ApplyDefaultRetentionDays(); // the oldest conversation may have just been removed
+        RefreshAfterCollectionChange();
     }
 
     /// <summary>
@@ -640,6 +664,7 @@ public sealed class MainViewModel : ObservableObject
 
         _cache.Remove(c.FilePath);
         _index.Remove(c.SessionId);   // drop it from the full-text index too (best-effort)
+        if (c.IsFavorite) SettingsService.SetFavorite(c.SessionId, false); // no stale favorite left behind
         c.PropertyChanged -= OnConversationPropertyChanged;
         _conversations.Remove(c);
     }
@@ -655,7 +680,6 @@ public sealed class MainViewModel : ObservableObject
     {
         var n = _conversations.Count;
         StatusText = n == 0 ? "No conversations found." : $"{n} conversation{(n == 1 ? "" : "s")}";
-        HasSelection = _conversations.Any(c => c.IsSelected);
     }
 
     /// <summary>

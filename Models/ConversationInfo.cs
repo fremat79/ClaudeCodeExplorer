@@ -67,6 +67,32 @@ public sealed class ConversationInfo : INotifyPropertyChanged
         }
     }
 
+    private bool _isFavorite;
+
+    /// <summary>Whether the user starred this conversation. Persisted in settings.json, not in the parse cache.</summary>
+    [JsonIgnore]
+    public bool IsFavorite
+    {
+        get => _isFavorite;
+        set
+        {
+            if (_isFavorite == value) return;
+            _isFavorite = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsFavorite)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(GroupKey)));
+        }
+    }
+
+    /// <summary>
+    /// Group name for the pinned favorites group. Contains '&lt;' / '&gt;', which can't appear in a
+    /// Windows path, so it never collides with a real <see cref="WorkingDirectory"/>.
+    /// </summary>
+    public const string FavoritesGroupKey = "<favorites>";
+
+    /// <summary>What the tile view groups by: the pinned favorites group, otherwise the working directory.</summary>
+    [JsonIgnore]
+    public string GroupKey => IsFavorite ? FavoritesGroupKey : WorkingDirectory;
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     /// <summary>
